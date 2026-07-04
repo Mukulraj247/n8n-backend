@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: backend-n8n
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: JOBRIGHT_EMAIL
+        sync: false
+      - key: JOBRIGHT_PASSWORD
+        sync: false
+      - key: N8N_SHARED_SECRET
+        generateValue: true
+      - key: SESSION_TTL_MS
+        value: "1800000"
+      - key: EXPIRY_BUFFER_MS
+        value: "86400000"
+      - key: HEADLESS
+        value: "true"
