@@ -114,13 +114,23 @@ async function verifyAuthenticated(ctx, sessionId, jobId) {
   }
 }
 
+/** Extract the JobRight job id from a full job URL. */
+function extractJobId(jobUrlOrId) {
+  const s = String(jobUrlOrId || '').trim();
+  if (!s) return '';
+  if (!s.includes('/')) return s; // already an id
+  return s.split('?')[0].replace(/\/+$/, '').split('/').pop();
+}
+
 /**
- * Lightweight (no-browser) validation: fetch a job page with the given
- * SESSION_ID over plain HTTPS and confirm the authenticated data is present.
+ * Server-side (no-browser) fetch of a JobRight job page using a SESSION_ID.
+ * IMPORTANT: JobRight binds sessions to the originating IP, so this MUST run on
+ * the same host/IP that performed the login.
+ * Resolves the parsed `jobResult` object, or null if not logged in / not found.
  */
-function validateSessionHttp(sessionId, jobId) {
+function fetchJobResultHttp(sessionId, jobUrlOrId) {
   const https = require('https');
-  const id = jobId || '6a470070c2d11a6a466714a2';
+  const id = extractJobId(jobUrlOrId) || '6a470070c2d11a6a466714a2';
   return new Promise((resolve) => {
     const req = https.get(
       {
@@ -133,19 +143,47 @@ function validateSessionHttp(sessionId, jobId) {
         res.on('data', (c) => (d += c));
         res.on('end', () => {
           const m = d.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-          if (!m) return resolve(false);
+          if (!m) return resolve(null);
           try {
-            const jr = JSON.parse(m[1])?.props?.pageProps?.dataSource?.jobResult;
-            resolve(!!(jr && (jr.applyLink || jr.originalUrl)));
+            resolve(JSON.parse(m[1])?.props?.pageProps?.dataSource?.jobResult || null);
           } catch (e) {
-            resolve(false);
+            resolve(null);
           }
         });
       }
     );
-    req.on('error', () => resolve(false));
-    req.setTimeout(20000, () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(null));
+    req.setTimeout(25000, () => { req.destroy(); resolve(null); });
   });
 }
 
-module.exports = { fetchJobRightSession, verifyAuthenticated, validateSessionHttp };
+/** True if the SESSION_ID currently authenticates (job data has an apply URL). */
+async function validateSessionHttp(sessionId, jobId) {
+  const jr = await fetchJobResultHttp(sessionId, jobId);
+  return !!(jr && (jr.applyLink || jr.originalUrl));
+}
+
+/**
+ * Returns { applyUrl, jobTitle, jobId, loggedIn } for a job using a SESSION_ID.
+ * `loggedIn` is false when the page rendered logged-out (session invalid for this IP).
+ */
+async function getApplyUrl(sessionId, jobUrlOrId) {
+  const jr = await fetchJobResultHttp(sessionId, jobUrlOrId);
+  if (!jr) return { applyUrl: null, jobTitle: null, jobId: extractJobId(jobUrlOrId), loggedIn: false };
+  const applyUrl = jr.applyLink || jr.originalUrl || null;
+  return {
+    applyUrl: applyUrl || null,
+    jobTitle: jr.jobTitle || null,
+    jobId: jr.jobId || extractJobId(jobUrlOrId),
+    loggedIn: !!applyUrl,
+  };
+}
+
+module.exports = {
+  fetchJobRightSession,
+  verifyAuthenticated,
+  validateSessionHttp,
+  fetchJobResultHttp,
+  getApplyUrl,
+  extractJobId,
+};
