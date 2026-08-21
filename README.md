@@ -60,6 +60,39 @@ Response:
 }
 ```
 
+### `GET /api/jobright/job` (alias: `/api/jobright/apply-url`)
+Scrapes the main JobRight job fields **on this server** (same IP as login).
+
+Headers: `x-api-key: <N8N_SHARED_SECRET>` (or `?key=<secret>`).
+
+Query:
+- `?url=<jobright job url>` **or** `?jobId=<id>`
+
+Response (shape):
+```json
+{
+  "jobId": "6a470070c2d11a6a466714a2",
+  "jobTitle": "Software Engineer, New Grad",
+  "jobUrl": "https://jobright.ai/jobs/info/6a470070c2d11a6a466714a2",
+  "applyUrl": "https://boards.greenhouse.io/embed/job_app?token=…",
+  "normalizedJobUrl": "https://boards.greenhouse.io/embed/job_app?token=…",
+  "jobDescription": "…summary + responsibilities + qualifications…",
+  "jobSummary": "…",
+  "jobLocation": "Raleigh, NC",
+  "employmentType": "Full-time",
+  "workModel": "Onsite",
+  "isRemote": false,
+  "companyLogo": "https://…",
+  "publishTime": "2026-07-31 19:20:29",
+  "coreResponsibilities": ["…"],
+  "qualifications": { "mustHave": ["…"], "preferredHave": ["…"] },
+  "sessionSource": "cache"
+}
+```
+
+JobRight does not put a full HTML JD in page data, so `jobDescription` is assembled
+from summary / responsibilities / qualifications.
+
 ### `GET /health`
 Basic liveness + cache status.
 

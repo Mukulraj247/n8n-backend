@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { fetchJobRightSession, validateSessionHttp, getApplyUrl } = require('./login');
+const { fetchJobRightSession, validateSessionHttp, getJobDetails } = require('./login');
 
 const app = express();
 app.use(express.json());
@@ -89,12 +89,10 @@ app.get('/api/jobright/session', requireSecret, async (req, res) => {
 });
 
 /**
- * GET /api/jobright/apply-url?url=<jobright job url>  (or ?jobId=<id>)
- * Resolves the original/apply URL for a job. The fetch happens HERE (same IP as
- * the login) because JobRight binds sessions to the originating IP.
- * Auto re-logins once if the cached session has gone stale.
+ * Shared handler: scrape JobRight job details (apply URL, description, etc.).
+ * Fetch runs HERE (same IP as login) because JobRight binds sessions to IP.
  */
-app.get('/api/jobright/apply-url', requireSecret, async (req, res) => {
+async function handleJobDetails(req, res) {
   try {
     if (!EMAIL || !PASSWORD) {
       return res.status(500).json({ error: 'JOBRIGHT_EMAIL / JOBRIGHT_PASSWORD not configured' });
@@ -103,40 +101,57 @@ app.get('/api/jobright/apply-url', requireSecret, async (req, res) => {
     if (!jobRef) return res.status(400).json({ error: 'missing url or jobId query param' });
 
     let sess = await getSession(false);
-    let result = await getApplyUrl(sess.sessionId, jobRef);
+    let result = await getJobDetails(sess.sessionId, jobRef);
 
     // Session stale for this IP -> force a fresh login once and retry.
     if (!result.loggedIn) {
       cache = null;
       sess = await getSession(true);
-      result = await getApplyUrl(sess.sessionId, jobRef);
+      result = await getJobDetails(sess.sessionId, jobRef);
     }
 
-    if (!result.applyUrl) {
+    if (!result.loggedIn) {
       return res.status(502).json({
-        error: 'apply_url_not_found',
-        loggedIn: result.loggedIn,
+        error: 'job_scrape_failed',
+        loggedIn: false,
         jobId: result.jobId,
-        message: result.loggedIn
-          ? 'Job page loaded but has no external apply URL.'
-          : 'Could not authenticate the JobRight session (login may be failing).',
+        message: 'Could not authenticate the JobRight session (login may be failing).',
       });
     }
 
     res.json({
-      applyUrl: result.applyUrl,
       jobId: result.jobId,
       jobTitle: result.jobTitle,
+      jobUrl: result.jobUrl,
+      applyUrl: result.applyUrl,
+      normalizedJobUrl: result.normalizedJobUrl,
+      jobDescription: result.jobDescription,
+      jobSummary: result.jobSummary,
+      jobLocation: result.jobLocation,
+      employmentType: result.employmentType,
+      workModel: result.workModel,
+      isRemote: result.isRemote,
+      companyLogo: result.companyLogo,
+      publishTime: result.publishTime,
+      coreResponsibilities: result.coreResponsibilities,
+      qualifications: result.qualifications,
       sessionSource: sess.source,
     });
   } catch (e) {
-    res.status(502).json({ error: 'apply_url_failed', message: e.message });
+    res.status(502).json({ error: 'job_scrape_failed', message: e.message });
   }
-});
+}
+
+/**
+ * GET /api/jobright/apply-url?url=<jobright job url>  (or ?jobId=<id>)
+ * Also available as GET /api/jobright/job (same payload).
+ */
+app.get('/api/jobright/apply-url', requireSecret, handleJobDetails);
+app.get('/api/jobright/job', requireSecret, handleJobDetails);
 
 app.listen(PORT, () => {
   console.log(`backend-n8n listening on http://localhost:${PORT}`);
   console.log(`  GET /api/jobright/session`);
-  console.log(`  GET /api/jobright/apply-url?url=<jobUrl>`);
+  console.log(`  GET /api/jobright/job?url=<jobUrl>  (alias: /api/jobright/apply-url)`);
   console.log(`  (x-api-key required: ${SHARED_SECRET ? 'yes' : 'NO - set N8N_SHARED_SECRET'})`);
 });

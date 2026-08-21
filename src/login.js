@@ -163,19 +163,124 @@ async function validateSessionHttp(sessionId, jobId) {
   return !!(jr && (jr.applyLink || jr.originalUrl));
 }
 
+/** Strip common tracking/query noise from an apply URL. */
+function normalizeJobUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const u = new URL(url);
+    const drop = [
+      'utm_source',
+      'utm_medium',
+      'utm_campaign',
+      'utm_term',
+      'utm_content',
+      'utm_id',
+      'ref',
+      'source',
+      'gh_src',
+    ];
+    for (const k of drop) u.searchParams.delete(k);
+    const qs = u.searchParams.toString();
+    return u.origin + u.pathname + (qs ? '?' + qs : '') + u.hash;
+  } catch (e) {
+    return url;
+  }
+}
+
+function bulletBlock(title, items) {
+  if (!items || !items.length) return '';
+  return title + '\n' + items.map((x) => '- ' + String(x)).join('\n');
+}
+
 /**
- * Returns { applyUrl, jobTitle, jobId, loggedIn } for a job using a SESSION_ID.
+ * Build a readable job description from JobRight's structured jobResult fields
+ * (JobRight does not expose a single full HTML JD in __NEXT_DATA__).
+ */
+function buildJobDescription(jr) {
+  if (!jr) return null;
+  const parts = [];
+  if (jr.jobSummary) parts.push(String(jr.jobSummary).trim());
+  if (jr.jdResponsibilitySummary) parts.push(String(jr.jdResponsibilitySummary).trim());
+
+  const resp = bulletBlock('Responsibilities', jr.coreResponsibilities);
+  if (resp) parts.push(resp);
+
+  const must = jr.qualifications && jr.qualifications.mustHave;
+  const pref = jr.qualifications && jr.qualifications.preferredHave;
+  const mustBlock = bulletBlock('Qualifications (must have)', must);
+  if (mustBlock) parts.push(mustBlock);
+  const prefBlock = bulletBlock('Qualifications (preferred)', pref);
+  if (prefBlock) parts.push(prefBlock);
+
+  const benefits = bulletBlock('Benefits', jr.benefitsSummaries);
+  if (benefits) parts.push(benefits);
+  if (jr.whyJoinUs) parts.push('Why join us\n' + String(jr.whyJoinUs).trim());
+
+  const text = parts.filter(Boolean).join('\n\n').trim();
+  return text || null;
+}
+
+/**
+ * Scrape main job details from a JobRight job page using SESSION_ID.
  * `loggedIn` is false when the page rendered logged-out (session invalid for this IP).
  */
-async function getApplyUrl(sessionId, jobUrlOrId) {
+async function getJobDetails(sessionId, jobUrlOrId) {
+  const fallbackId = extractJobId(jobUrlOrId);
   const jr = await fetchJobResultHttp(sessionId, jobUrlOrId);
-  if (!jr) return { applyUrl: null, jobTitle: null, jobId: extractJobId(jobUrlOrId), loggedIn: false };
+  if (!jr) {
+    return {
+      loggedIn: false,
+      jobId: fallbackId || null,
+      jobTitle: null,
+      jobUrl: fallbackId ? 'https://jobright.ai/jobs/info/' + fallbackId : null,
+      applyUrl: null,
+      normalizedJobUrl: null,
+      jobDescription: null,
+      jobSummary: null,
+      jobLocation: null,
+      employmentType: null,
+      workModel: null,
+      companyLogo: null,
+      publishTime: null,
+      coreResponsibilities: null,
+      qualifications: null,
+    };
+  }
+
+  const jobId = jr.jobId || fallbackId || null;
   const applyUrl = jr.applyLink || jr.originalUrl || null;
+  const jobUrl = jobId ? 'https://jobright.ai/jobs/info/' + jobId : null;
+
   return {
-    applyUrl: applyUrl || null,
-    jobTitle: jr.jobTitle || null,
-    jobId: jr.jobId || extractJobId(jobUrlOrId),
-    loggedIn: !!applyUrl,
+    loggedIn: true,
+    jobId,
+    jobTitle: jr.jobTitle || jr.jobNlpTitle || null,
+    jobUrl,
+    applyUrl,
+    normalizedJobUrl: normalizeJobUrl(applyUrl),
+    jobDescription: buildJobDescription(jr),
+    jobSummary: jr.jobSummary || null,
+    jobLocation: jr.jobLocation || null,
+    employmentType: jr.employmentType || null,
+    workModel: jr.workModel || null,
+    companyLogo: jr.jdLogo || null,
+    publishTime: jr.publishTime || null,
+    isRemote: !!jr.isRemote,
+    coreResponsibilities: Array.isArray(jr.coreResponsibilities) ? jr.coreResponsibilities : null,
+    qualifications: jr.qualifications || null,
+  };
+}
+
+/**
+ * Returns apply URL + title for a job using a SESSION_ID (thin wrapper).
+ */
+async function getApplyUrl(sessionId, jobUrlOrId) {
+  const d = await getJobDetails(sessionId, jobUrlOrId);
+  return {
+    applyUrl: d.applyUrl,
+    jobTitle: d.jobTitle,
+    jobId: d.jobId,
+    loggedIn: d.loggedIn,
   };
 }
 
@@ -185,5 +290,8 @@ module.exports = {
   validateSessionHttp,
   fetchJobResultHttp,
   getApplyUrl,
+  getJobDetails,
+  buildJobDescription,
+  normalizeJobUrl,
   extractJobId,
 };
